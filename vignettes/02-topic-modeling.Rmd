@@ -1,0 +1,201 @@
+---
+title: "Unsupervised Model Explorations (NMF with R)"
+output: html_document
+# Vignette specific items:
+vignette: >
+  %\VignetteIndexEntry{02 Topic Modeling (NMF)}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = TRUE)
+
+# Load necessary libraries
+library(jeopardyNLP)
+library(dplyr)
+library(ggplot2)
+library(wordcloud)
+library(tm)           # For VCorpus, DocumentTermMatrix
+library(NMF)          # For nmf function and results handling
+library(RColorBrewer) # For word cloud palettes
+library(slam)         # For sparse matrix operations
+library(knitr)        # For kable
+
+# --- Data Loading --- 
+# Load package and access internal data
+library(jeopardyNLP)
+data_available <- exists("jeopardy_data") && is.data.frame(jeopardy_data)
+
+regular_episodes <- NULL
+if(data_available) {
+  # Process the internal data to get the structure needed for this vignette
+  message("Processing internal jeopardy_data for vignette...")
+  regular_episodes <- create_regular_episodes_df(jeopardy_data, 
+                                               add_q_and_a = TRUE, 
+                                               add_difficulty = TRUE) # Keep difficulty for potential context
+  message(paste("Dimensions of regular_episodes:", paste(dim(regular_episodes), collapse="x")))
+  message("Processing complete.")
+} else {
+    message("Internal jeopardy_data not found. Package might not be loaded correctly.")
+}
+
+# Ensure data is available for subsequent chunks
+data_available <- !is.null(regular_episodes)
+
+# Create a temporary directory for saving images
+temp_image_dir <- file.path(tempdir(), "jeopardy_nmf_images")
+if (!dir.exists(temp_image_dir)) {
+  dir.create(temp_image_dir, recursive = TRUE)
+}
+
+```
+
+```{r preprocess_text, eval=data_available, echo=TRUE, message=FALSE}
+# --- Text Preprocessing ---
+# Create a Corpus
+corpus <- VCorpus(VectorSource(regular_episodes$question_answer))
+
+# Clean the text
+corpus_clean <- corpus %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(removePunctuation) %>%
+  tm_map(removeNumbers) %>%
+  tm_map(removeWords, stopwords("english")) %>%
+  tm_map(stripWhitespace) # Ensure extra spaces from removals are handled
+
+# Create Document-Term Matrix
+dtm <- DocumentTermMatrix(corpus_clean)
+message(paste("Dimensions of initial DTM:", paste(dim(dtm), collapse="x")))
+
+# Remove sparse terms (e.g., keep terms appearing in at least 1% of documents)
+# Adjust sparsity threshold as needed
+min_doc_freq <- floor(nrow(regular_episodes) * 0.01) 
+message(paste("Calculated min_doc_freq:", min_doc_freq))
+frequent_terms <- findFreqTerms(dtm, lowfreq = min_doc_freq)
+
+if (length(frequent_terms) == 0) {
+  warning("No terms found meeting the minimum document frequency threshold. Skipping NMF.")
+  # Set dtm_sparse to NULL or an empty matrix to prevent downstream errors, 
+  # or stop execution if NMF is essential. Let's set to NULL and let eval= handle it.
+  tdm_sparse <- NULL 
+} else {
+  dtm_sparse <- dtm[, frequent_terms] 
+  # Keep only documents that still have terms after filtering
+  dtm_sparse <- dtm_sparse[row_sums(dtm_sparse) > 0, ]
+  
+  # Check if any documents remain
+  if (nrow(dtm_sparse) == 0) {
+      warning("No documents remaining after removing sparse terms and empty documents. Skipping NMF.")
+      tdm_sparse <- NULL
+  } else {
+      # Convert DTM to a matrix suitable for NMF package
+      # For standard NMF::nmf, it expects features (terms) as rows, documents as columns.
+      tdm_sparse <- t(dtm_sparse) 
+  }
+}
+```
+
+```{r run_nmf, eval=data_available && !is.null(tdm_sparse), echo=TRUE, results='hide', message=TRUE}
+# --- Load Pre-computed NMF Model ---
+# The NMF model is computed during package build and saved in inst/extdata
+# We load it here for faster vignette execution.
+
+model_path <- system.file("extdata", "jeopardy_nmf_model.rds", package = "jeopardyNLP")
+
+if (!nzchar(model_path)) {
+  stop("NMF model file (inst/extdata/jeopardy_nmf_model.rds) not found. Package build might be incomplete or the file is missing.")
+}
+
+message(paste("Loading pre-computed NMF model from:", model_path))
+nmf_result <- readRDS(model_path)
+message("Model loaded successfully.")
+
+# --- Original NMF Execution Code (commented out) ---
+# # Define the number of topics (k) - based on vignette conclusion
+# k <- 13 
+# 
+# # Run NMF (using default 'brunet' method for stability, set seed for reproducibility)
+# # Note: NMF can be computationally intensive. Consider running fewer nrun for quicker checks.
+# set.seed(123) # for reproducibility
+# nmf_result <- NMF::nmf(tdm_sparse, rank = k, method = "lee", nrun = 10, seed = 123, .options="v") # Using 'lee' can be faster, nrun for stability
+# 
+# # Save the model
+# # NOTE: Saving is done during the initial build process, not during standard vignette execution.
+# # saveRDS(nmf_result, file = file.path("inst", "extdata", "jeopardy_nmf_model.rds"))
+# # message("NMF model saved to inst/extdata/jeopardy_nmf_model.rds")
+# 
+# # Optional: Clean up large intermediate objects if memory is a concern
+# # rm(corpus, corpus_clean, dtm, dtm_sparse, tdm_sparse)
+# # gc() 
+```
+
+```{r nmf_results_summary, eval=data_available && !is.null(tdm_sparse), echo=TRUE, fig.show='hold'}
+# --- NMF Results Summary ---
+# Display basic information about the fit
+print(summary(nmf_result))
+
+# Extract top terms for each topic
+# The basis matrix W (features x topics)
+W <- basis(nmf_result)
+# The coefficient matrix H (topics x documents)
+# H <- coef(nmf_result) 
+
+# Get the top N terms for each topic
+# NMF::extractFeatures returns a list, where each element is the top features for a topic
+top_n_terms <- 10
+topic_top_terms <- NMF::extractFeatures(nmf_result, n = top_n_terms)
+
+# Display the top terms per topic
+message(paste("Top", top_n_terms, "terms per topic:"))
+for (i in 1:ncol(W)) {
+  # Extract the terms for topic i from the list
+  terms_for_topic <- topic_top_terms[[i]]
+  # Collapse the terms into a single string for printing
+  terms_str <- paste(terms_for_topic, collapse = ", ")
+  message(sprintf("Topic %d: %s", i, terms_str))
+}
+
+# Generate Word Clouds for each topic
+message("\nGenerating word clouds per topic...")
+# Set colors for the word clouds
+colors <- brewer.pal(8, "Dark2")
+
+for (i in 1:ncol(W)) {
+  # Get term weights for the current topic
+  topic_weights <- W[, i]
+  # Ensure weights are positive for wordcloud
+  topic_weights <- pmax(topic_weights, 0)
+  # Filter out zero weights to avoid errors/warnings
+  topic_weights <- topic_weights[topic_weights > 0]
+  
+  # Check if there are any terms left after filtering
+  if (length(topic_weights) > 0) {
+    # Create word cloud
+    # Using print() explicitly helps ensure plots render correctly in loops/Rmd
+    print(wordcloud(words = names(topic_weights), 
+                  freq = topic_weights, 
+                  max.words = 50, # Limit max words shown
+                  random.order = FALSE, 
+                  colors = colors,
+                  scale = c(3, 0.5), # Adjust scale for better visualization
+                  main = paste("Topic", i))) # Doesn't work directly, add title separately
+    title(main = paste("Topic", i), line = -1) # Add title slightly above the cloud
+  } else {
+    message(sprintf("Skipping word cloud for Topic %d: No terms with positive weight.", i))
+  }
+}
+
+# (Placeholder for further analysis/visualization code)
+# - Plot consensus map (if nrun > 1 and original model object retained it)
+# - Examine coefficient matrix H
+```
+
+## Conclusion
+
+This vignette demonstrated unsupervised topic modeling using NMF with the `jeopardyNLP` package. We identified 13 potential latent topics from the clue text.
+
+```{r data_not_available_message, eval=!data_available, echo=FALSE, results='asis'}
+cat("## Data Not Available\\n\\n")
+cat("The internal `jeopardy_data` object could not be loaded/processed. Ensure the `jeopardyNLP` package is installed and loaded correctly.\\n")
+```

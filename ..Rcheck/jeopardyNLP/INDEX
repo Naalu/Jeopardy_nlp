@@ -1,0 +1,33 @@
+add_clue_difficulty     Add Clue Difficulty Column
+add_question_answer_col
+                        Create Combined Question and Answer Column
+calculate_top_categories
+                        Calculate Top N Categories
+calculate_word_counts   Calculate Word Counts
+clean_text_corpus       Clean Text Corpus using tm
+create_regular_episodes_df
+                        Create Processed Data Frame for Regular
+                        Episodes
+create_special_tournaments_df
+                        Create Special Tournaments Dataframe
+create_tfidf_matrix     Create TF-IDF Matrix
+evaluate_nmf_ranks      Evaluate NMF Ranks (Find Best k)
+extract_text_vector     Extract Text Vector from DataFrame Column
+get_nmf_residuals       Get NMF Residuals
+get_top_words_per_topic
+                        Get Top Words Per Topic
+get_word_weights_for_cloud
+                        Get Word Weights for Topic Word Cloud
+jeopardy_data           Jeopardy! Clues Dataset
+load_stopwords          Load Stopwords
+plot_all_topic_clouds   Plot All Topic Word Clouds
+plot_nmf_evaluation     Plot NMF Rank Evaluation Metric
+plot_top_categories     Plot Top N Categories
+plot_topic_word_cloud   Plot Topic Word Cloud
+plot_word_cloud         Plot Word Cloud from Text Column
+plot_word_counts_difficulty
+                        Plot Word Counts vs. Clue Difficulty
+read_jeopardy_tsv       Read Jeopardy TSV Data [Deprecated]
+remove_short_tokens     Remove Short Tokens
+replace_hyphens         Replace Hyphens with Spaces
+run_nmf_model           Run NMF Model

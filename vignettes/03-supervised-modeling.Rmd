@@ -1,0 +1,302 @@
+---
+title: "Supervised Model Exploration (R)"
+output: html_document
+# Vignette specific items:
+vignette: >
+  %\VignetteIndexEntry{03 Supervised Modeling}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# Load necessary libraries
+library(jeopardyNLP)
+library(dplyr)
+library(ggplot2) # Still used implicitly by caret?
+library(tm)      # For VCorpus, DocumentTermMatrix
+library(caret)   # For data splitting, confusion matrix
+library(e1071)   # For Naive Bayes
+library(Matrix)  # For handling sparse matrices
+
+# --- Data Loading --- 
+# Load package and access internal data
+library(jeopardyNLP)
+data_available <- exists("jeopardy_data") && is.data.frame(jeopardy_data)
+
+regular_episodes <- NULL
+if(data_available) {
+  # Process the internal data to get the structure needed for this vignette
+  message("Processing internal jeopardy_data for vignette...")
+  regular_episodes <- create_regular_episodes_df(jeopardy_data, 
+                                               add_q_and_a = TRUE, 
+                                               add_difficulty = TRUE)
+  message("Processing complete.
+")
+} else {
+    message("Internal jeopardy_data not found. Package might not be loaded correctly.")
+}
+
+# Ensure data is available for subsequent chunks
+data_available <- !is.null(regular_episodes)
+
+```
+
+`r if (!data_available) '{=html}<!--'`
+
+## Introduction
+
+This vignette explores supervised machine learning models to predict the difficulty (`easy`, `average`, `hard`) of a Jeopardy clue based on its text content using the `jeopardyNLP` package. We will use the combined "Question and Answer" text, process it using TF-IDF (converted to binary presence/absence), and train/evaluate a Naive Bayes classifier.
+
+**Note:** This vignette uses the `jeopardy_data` object included with the `jeopardyNLP` package and processes it within the first code chunk. No external data files are required.
+
+## Data Preparation
+
+We use the `regular_episodes` data frame created in the setup chunk, ensure the target variable `clue_difficulty` exists and is a factor, then take a 75% sample for efficiency.
+
+```{r prepare_data, eval=data_available}
+
+# Ensure Clue Difficulty column exists
+if (!"clue_difficulty" %in% names(regular_episodes)) {
+    stop("'clue_difficulty' column not found in the processed data. Please ensure create_regular_episodes_df was run with add_difficulty=TRUE.")
+}
+
+# Convert target to factor
+regular_episodes <- regular_episodes %>% 
+    dplyr::mutate(clue_difficulty = factor(clue_difficulty, levels = c("easy", "average", "hard")))
+
+# Filter out rows where essential columns (text or target) are NA
+regular_episodes_filtered <- regular_episodes %>% 
+    dplyr::filter(!is.na(question_and_answer), question_and_answer != "",
+                  !is.na(clue_difficulty))
+
+message(paste("Dimensions after filtering NAs:", nrow(regular_episodes_filtered)))
+print("Class distribution after filtering NAs:")
+print(table(regular_episodes_filtered$clue_difficulty))
+
+# Take a sample (max 20k rows) for faster processing
+set.seed(123)
+sample_size_v3 <- min(nrow(regular_episodes_filtered), 20000)
+data_sample <- regular_episodes_filtered %>% dplyr::sample_n(sample_size_v3)
+
+message(paste("Dimensions of sampled data:", nrow(data_sample)))
+print("Class distribution in initial sample:")
+print(table(data_sample$clue_difficulty)) # Check class distribution in sample
+
+# Check if we have enough data points and levels for createDataPartition
+min_samples_per_class = 10 # Increased from 2
+class_counts <- table(data_sample$clue_difficulty)
+valid_classes <- names(class_counts[class_counts >= min_samples_per_class])
+
+if (length(valid_classes) < 2) {
+  # Attempt to filter data to only include classes with enough samples
+  if (length(valid_classes) > 0) {
+      message(paste("Warning: Fewer than 2 classes have >=", min_samples_per_class,
+                    "samples. Filtering data to only include:", paste(valid_classes, collapse=", ")))
+      data_sample <- data_sample %>% dplyr::filter(clue_difficulty %in% valid_classes)
+      # Re-check after filtering
+      if (n_distinct(data_sample$clue_difficulty) < 2) {
+          stop("Sampled data has fewer than 2 classes even after filtering. Cannot perform stratified split.")
+      }
+  } else {
+      # If no classes have enough samples
+      stop(paste("Sampled data has no classes with at least",
+             min_samples_per_class,
+             "samples after filtering and sampling. Cannot perform stratified split."))
+  }
+} else if (length(valid_classes) < 3) {
+    # Warn if we dropped a class but still have >= 2
+    message(paste("Warning: Only", length(valid_classes), "classes have >=", min_samples_per_class,
+                  "samples. Filtering data to only include:", paste(valid_classes, collapse=", ")))
+    data_sample <- data_sample %>% dplyr::filter(clue_difficulty %in% valid_classes)
+    message("Sufficient samples per class found for stratified split after filtering.")
+} else {
+    message("All 3 classes have sufficient samples per class found for stratified split.")
+}
+
+message(paste("Dimensions after filtering for min samples per class (", min_samples_per_class,"):", nrow(data_sample)))
+print(paste("Class distribution after filtering for min samples per class (", min_samples_per_class,"):"))
+print(table(data_sample$clue_difficulty)) # Check class distribution before split
+
+
+# Optional: Filter sample further to only include classes with enough data?
+# data_sample <- data_sample %>% dplyr::filter(clue_difficulty %in% valid_classes)
+# message(paste("Dimensions after filtering for valid classes:", nrow(data_sample)))
+```
+
+## Train/Test Split
+
+We split the sampled data into training (70%) and testing (30%) sets, ensuring stratification based on the `clue_difficulty` outcome using `caret::createDataPartition`.
+
+```{r split_data, eval=data_available}
+set.seed(42) # Use a specific seed for reproducibility
+
+# Create stratified indices for the training set
+train_indices <- caret::createDataPartition(data_sample$clue_difficulty, 
+                                          p = 0.70,         # Proportion for training set
+                                          list = FALSE)
+
+# Create training and testing sets
+train_data <- data_sample[train_indices, ]
+test_data <- data_sample[-train_indices, ]
+
+message("Training set dimensions:", paste(dim(train_data), collapse=" x "))
+message("Testing set dimensions:", paste(dim(test_data), collapse=" x "))
+
+print("Training set class distribution:")
+table(train_data$clue_difficulty)
+print("Testing set class distribution:")
+table(test_data$clue_difficulty)
+```
+
+## Text Preprocessing and Feature Engineering (TF-IDF)
+
+1. Clean the `question_and_answer` text for both training and test sets using `clean_text_corpus` (with default package stopwords).
+2. Create a TF-IDF Document-Term Matrix (DTM) from the **training** text, setting a minimum term frequency (e.g., appearing in >= 5 documents).
+3. Apply the **same** TF-IDF vocabulary (dictionary) and weighting to the **test** text.
+4. Convert the TF-IDF scores to binary (0/1) for term presence/absence.
+5. Convert the sparse binary matrices to dense data frames suitable for `e1071::naiveBayes`.
+
+```{r tfidf_features, eval=data_available}
+
+# --- 1. Clean Text --- 
+message("Cleaning training text...")
+# Use default package stopwords
+train_text_cleaned <- clean_text_corpus(train_data$question_and_answer)
+train_ids_to_keep <- which(train_text_cleaned != "") # Track non-empty docs
+train_text_cleaned <- train_text_cleaned[train_ids_to_keep]
+y_train <- train_data$clue_difficulty[train_ids_to_keep]
+
+message("Cleaning testing text...")
+# Use default package stopwords
+test_text_cleaned <- clean_text_corpus(test_data$question_and_answer)
+test_ids_to_keep <- which(test_text_cleaned != "") # Track non-empty docs
+test_text_cleaned <- test_text_cleaned[test_ids_to_keep]
+y_test <- test_data$clue_difficulty[test_ids_to_keep]
+
+message(paste("Documents remaining - Train:", length(train_text_cleaned), "Test:", length(test_text_cleaned)))
+
+# --- 2. Create Training TF-IDF DTM --- 
+message("Creating TF-IDF matrix from training data...")
+
+# Create Corpus
+train_corpus <- tm::VCorpus(tm::VectorSource(train_text_cleaned))
+
+# Create DTM with TF-IDF, requiring term in >= 5 documents
+train_dtm_tfidf <- tm::DocumentTermMatrix(train_corpus, 
+                                          control = list(weighting = tm::weightTfIdf,
+                                                         bounds = list(global = c(5, Inf)))) 
+
+message(paste("Initial Train DTM dimensions (Docs x Terms):", 
+            paste(dim(train_dtm_tfidf), collapse = " x ")))
+
+# --- 3. Create Test TF-IDF DTM using Training Dictionary --- 
+message("Creating TF-IDF matrix for testing data...")
+test_corpus <- tm::VCorpus(tm::VectorSource(test_text_cleaned))
+test_dtm_tfidf <- tm::DocumentTermMatrix(test_corpus, 
+                                         control = list(weighting = tm::weightTfIdf, 
+                                                        dictionary = tm::Terms(train_dtm_tfidf))) # Use training terms!
+
+message(paste("Test DTM dimensions (Docs x Terms):", 
+            paste(dim(test_dtm_tfidf), collapse = " x ")))
+
+# --- 4. Convert TF-IDF to Binary Presence/Absence --- 
+message("Converting TF-IDF to binary features...")
+
+# Use tm::weightBin for efficient conversion
+train_dtm_binary <- tm::weightBin(train_dtm_tfidf)
+test_dtm_binary <- tm::weightBin(test_dtm_tfidf)
+
+# --- 5. Convert Sparse Matrices to Dense Data Frames --- 
+# Required by e1071::naiveBayes
+# Warning: This can consume significant memory for large feature sets!
+message("Converting sparse matrices to dense data frames...")
+X_train_df <- as.data.frame(as.matrix(train_dtm_binary))
+X_test_df <- as.data.frame(as.matrix(test_dtm_binary))
+
+# --- Data Integrity Checks --- 
+# Ensure test set has exactly the same columns (features) as train set
+train_cols <- colnames(X_train_df)
+if (!identical(train_cols, colnames(X_test_df))) {
+    warning("Column names differ between training and test features after DTM creation! Attempting to align.")
+    test_cols <- colnames(X_test_df)
+    missing_in_test <- setdiff(train_cols, test_cols)
+    extra_in_test <- setdiff(test_cols, train_cols)
+    
+    if(length(missing_in_test) > 0) {
+        for(c in missing_in_test) { X_test_df[[c]] <- 0 } # Add missing columns as 0
+    }
+    if(length(extra_in_test) > 0) {
+        X_test_df <- X_test_df[, !names(X_test_df) %in% extra_in_test] # Remove extra columns
+    }
+    # Ensure same column order
+    X_test_df <- X_test_df[, train_cols]
+}
+
+# Convert all feature columns to factors with levels "0" and "1" for Naive Bayes
+message("Converting features to factors...")
+X_train_df[] <- lapply(X_train_df, factor, levels = c(0, 1))
+X_test_df[] <- lapply(X_test_df, factor, levels = c(0, 1))
+
+# Final dimension checks
+message(paste("Final Training Features Dim (Rows x Cols):", paste(dim(X_train_df), collapse=" x ")))
+message(paste("Final Test Features Dim (Rows x Cols):", paste(dim(X_test_df), collapse=" x ")))
+message(paste("Training Labels Length:", length(y_train)))
+message(paste("Test Labels Length:", length(y_test)))
+
+# Check if row counts match label lengths
+stopifnot(nrow(X_train_df) == length(y_train))
+stopifnot(nrow(X_test_df) == length(y_test))
+
+```
+
+## Train Naive Bayes Model
+
+We train a Naive Bayes classifier using the binary term presence features (factors) and Laplace smoothing (`laplace = 1`).
+
+```{r train_nb, cache=TRUE, eval=data_available}
+message("Training Naive Bayes model...")
+
+# Train using e1071::naiveBayes
+nb_model <- e1071::naiveBayes(x = X_train_df, y = y_train, laplace = 1)
+
+message("Model training complete.")
+```
+
+## Evaluate Naive Bayes Model
+
+We evaluate the trained model on the held-out test set using `caret::confusionMatrix`.
+
+```{r evaluate_nb, eval=data_available}
+message("Making predictions on the test set...")
+nb_predictions <- predict(nb_model, X_test_df)
+
+message("Calculating confusion matrix...")
+
+# Ensure prediction levels match target levels before creating confusion matrix
+prediction_levels <- levels(nb_predictions)
+target_levels <- levels(y_test)
+all_levels <- unique(c(prediction_levels, target_levels))
+
+nb_predictions <- factor(nb_predictions, levels = all_levels)
+y_test_eval <- factor(y_test, levels = all_levels)
+
+# Generate confusion matrix using caret
+conf_matrix_nb <- caret::confusionMatrix(data = nb_predictions, reference = y_test_eval)
+
+print("Confusion Matrix and Statistics:")
+print(conf_matrix_nb)
+
+# Display key metrics
+print(paste("Overall Accuracy:", 
+            round(conf_matrix_nb$overall['Accuracy'], 3)))
+print(paste("Kappa:", 
+            round(conf_matrix_nb$overall['Kappa'], 3)))
+```
+
+## Conclusion
+
+This vignette demonstrated a basic supervised learning workflow for classifying Jeopardy clue difficulty using text features (TF-IDF converted to binary presence) and a Naive Bayes model via the `jeopardyNLP` package.
+
+`

@@ -1,0 +1,32 @@
+^.*\\.Rproj$
+^\\.Rproj\.user$
+^\\.Rhistory$
+^\\.RData$
+^\\.Ruserdata$
+
+# Package development files
+^README\\.Rmd$
+^LICENSE\\.md$
+^cran-comments\\.md$
+^news\\.md$
+
+# Vignette files (these are processed by R CMD build)
+# ^vignettes$
+# ^.*\\.[rR]?md$
+
+# Example data or helper files not needed in package
+# ^inst/examples$
+
+# Check results
+^..Rcheck$
+
+# Git files
+^\\.git$
+^\\.gitignore$
+
+# Images (if generated and not part of package data)
+^images$
+
+# Other temporary files
+^\\.DS_Store$
+^\.Rproj\.user$

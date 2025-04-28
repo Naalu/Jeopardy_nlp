@@ -1,0 +1,214 @@
+---
+title: "1.0 - Jeopardy Data Exploration (R)"
+output: html_document
+# Vignette specific items:
+vignette: >
+  %\VignetteIndexEntry{01 Data Exploration}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# Load necessary libraries (package itself + suggested for vignette)
+library(jeopardyNLP)
+library(dplyr)
+library(ggplot2)
+library(knitr) 
+
+# The jeopardy_data object is loaded automatically with library(jeopardyNLP)
+# Check if the data exists
+data_available <- exists("jeopardy_data") && is.data.frame(jeopardy_data)
+
+# Create a temporary directory for saving images within this vignette run
+# This avoids writing to the user's project structure by default
+temp_image_dir <- file.path(tempdir(), "jeopardy_eda_images")
+if (!dir.exists(temp_image_dir)) {
+  dir.create(temp_image_dir, recursive = TRUE)
+}
+```
+
+`r if (!data_available) '{=html}<!--'`
+
+## Introduction
+
+This vignette demonstrates the initial data loading, preprocessing, and exploratory data analysis (EDA) steps using the `jeopardyNLP` package.
+
+**Note:** This vignette uses the `jeopardy_data` object included directly within the `jeopardyNLP` package. No external data files are required to run this vignette.
+
+## Load and Preprocess Data
+
+First, we access the internal `jeopardy_data`. Then, we process it using `create_regular_episodes_df` to filter for regular episodes, format column names, add the combined 'Question And Answer' column, and add the 'Clue Difficulty' column.
+
+```{r load_data, eval=data_available}
+# Access the internal jeopardy_data object (already loaded)
+
+# Create the regular episodes dataframe using the package function
+regular_episodes <- create_regular_episodes_df(
+  jeopardy_data, # Use internal data
+  add_q_and_a = TRUE, 
+  add_difficulty = TRUE, 
+  viewer_assumptions = FALSE # Use default difficulty logic
+)
+
+# Display the first few rows of the processed dataframe
+print("Sample of processed regular episodes data:")
+head(regular_episodes)
+
+# Display dimensions
+print("Dimensions of processed data:")
+dim(regular_episodes)
+
+# Clean up raw data object
+rm(jeopardy_raw)
+gc() # Suggest garbage collection
+
+# Take a sample for faster vignette processing (e.g., 10k rows max)
+set.seed(123)
+sample_size_v1 <- min(nrow(regular_episodes), 10000)
+regular_episodes_sample <- regular_episodes %>% dplyr::sample_n(sample_size_v1)
+message(paste("Using sample of size:", nrow(regular_episodes_sample)))
+```
+
+Optionally, save this processed dataframe locally for faster loading later.
+
+```{r save_processed_data, eval=FALSE}
+# NOTE: This chunk is no longer necessary for other vignettes but is kept 
+# as an example if users want to save intermediate results locally.
+# Set a local path appropriate for your system if you run this
+# local_data_dir <- "./local_data" # Example local directory
+# if (!dir.exists(local_data_dir)) dir.create(local_data_dir)
+# processed_data_path <- file.path(local_data_dir, "regular_episodes.csv")
+# 
+# # Save the dataframe
+# readr::write_csv(regular_episodes, processed_data_path) 
+# print(paste("Processed data saved to:", processed_data_path))
+```
+
+## Exploratory Data Analysis (EDA)
+
+Now we perform some basic EDA using functions from the `jeopardyNLP` package.
+
+### Most Common Words in J-Categories (Word Cloud)
+
+We generate a word cloud for the raw 'J-Category' text. The `plot_word_cloud` function performs basic cleaning internally.
+
+```{r jcategory_wordcloud, eval=data_available}
+# Generate and display word cloud directly using the sample
+plot_word_cloud(regular_episodes_sample, 
+                "category", 
+                perform_cleaning = TRUE, 
+                color_palette = "Dark2") 
+```
+
+*(Displaying the generated image below)*
+
+```{r display_jcat_cloud, echo=FALSE, eval=data_available, out.width="70%"}
+# knitr::include_graphics(file.path(temp_image_dir, jcat_wc_filename))
+# Removed - plot renders above
+```
+
+### Top 10 Most Common J-Categories
+
+We calculate and plot the top 10 most frequent J-Categories based on estimated episode appearances.
+
+```{r top_categories_calc, eval=data_available}
+# Calculate the top 10 categories using the package function on the sample
+common_categories <- calculate_top_categories(regular_episodes_sample, n = 10)
+
+# Display the table
+knitr::kable(common_categories, caption = "Top 10 J-Categories by Estimated Episode Appearance")
+```
+
+```{r top_categories_plot, eval=data_available}
+# Calculate data needed for plot using the sample
+top_cats_for_plot <- calculate_top_categories(regular_episodes_sample, n = 10)
+
+# Generate and display plot directly
+plot_top_categories(top_cats_for_plot)
+```
+
+*(Displaying the generated image below)*
+
+```{r display_topcat_plot, echo=FALSE, eval=data_available, out.width="70%"}
+# knitr::include_graphics(file.path(temp_image_dir, topcat_plot_filename)) 
+# Removed - plot renders above
+```
+
+### Most Common Words in Questions and Answers (Word Cloud)
+
+Here, we visualize the most common words in the combined 'Question And Answer' column.
+*Note: For modeling purposes (like NMF), it is recommended to use the more comprehensive `clean_text_corpus` function beforehand.*
+
+```{r q_and_a_wordcloud, eval=data_available}
+# Generate and display word cloud directly using the sample
+plot_word_cloud(regular_episodes_sample, 
+                "question_and_answer", 
+                perform_cleaning = TRUE, 
+                color_palette = "Set1")
+```
+
+*(Displaying the generated image below)*
+
+```{r display_qanda_cloud, echo=FALSE, eval=data_available, out.width="70%"}
+# knitr::include_graphics(file.path(temp_image_dir, qanda_wc_filename))
+# Removed - plot renders above
+```
+
+### Word Counts vs. Clue Difficulty
+
+We analyze if the length of the answer or question varies with the assigned clue difficulty.
+
+```{r word_counts_calc, eval=data_available}
+# Calculate word counts per clue using the package function on the sample
+word_counts_df <- calculate_word_counts(regular_episodes_sample)
+
+# Display first few rows
+print("Sample word counts per clue:")
+head(word_counts_df)
+```
+
+```{r answer_word_count_plot, eval=data_available}
+# Calculate word counts using the sample
+word_counts_df <- calculate_word_counts(regular_episodes_sample)
+
+# Generate and display plot directly
+plot_word_counts_difficulty(word_counts_df, 
+                            "Answer Word Count")
+```
+
+*(Displaying the generated image below)*
+
+```{r display_answer_wc_plot, echo=FALSE, eval=data_available, out.width="70%"}
+# knitr::include_graphics(file.path(temp_image_dir, answer_wc_plot_filename)) 
+# Removed - plot renders above
+```
+
+```{r question_word_count_plot, eval=data_available}
+# Calculate word counts (if not done already in previous chunk) using sample
+if (!exists("word_counts_df")) {
+    word_counts_df <- calculate_word_counts(regular_episodes_sample)
+}
+
+# Generate and display plot directly
+plot_word_counts_difficulty(word_counts_df, 
+                            "Question Word Count", 
+                            bar_color = "darkgreen")
+```
+
+*(Displaying the generated image below)*
+
+```{r display_question_wc_plot, echo=FALSE, eval=data_available, out.width="70%"}
+# knitr::include_graphics(file.path(temp_image_dir, question_wc_plot_filename)) 
+# Removed - plot renders above
+```
+
+## Conclusion
+
+This vignette demonstrated initial data loading, preprocessing, and EDA for the Jeopardy! dataset using the `jeopardyNLP` package. The processed data and insights are ready for more advanced analysis, such as the topic modeling explored in other vignettes.
+
+`r if (!data_available) '-->'`
+
+`r if (!data_available) '## Data Not Available'`
+`r if (!data_available) "The internal 'jeopardy_data' object could not be loaded from the 'jeopardyNLP' package. Ensure the package is installed correctly."`

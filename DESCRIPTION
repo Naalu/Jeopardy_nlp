@@ -1,0 +1,47 @@
+Type: Package
+Package: jeopardyNLP
+Title: Analyze Jeopardy! Clue Text with NLP Techniques
+Version: 0.1.0
+Author: Chris Reger
+Maintainer: Chris Reger <kcr28@nau.edu>
+Description: Provides functions and workflows for preprocessing,
+    exploring, and modeling text data from Jeopardy! clues. Includes tools
+    for text cleaning, exploratory data analysis (EDA) via word clouds and
+    plots, unsupervised topic modeling using Non-negative Matrix
+    Factorization (NMF), and supervised classification of clue difficulty.
+License: MIT
+Depends: 
+    R (>= 3.5)
+Imports: 
+    dplyr,
+    forcats,
+    ggplot2,
+    lifecycle,
+    Matrix,
+    NMF,
+    RColorBrewer,
+    readr,
+    scales,
+    slam,
+    stringr,
+    tm,
+    tidyr,
+    wordcloud
+Suggests:
+    caret,
+    e1071,
+    here,
+    knitr,
+    purrr,
+    rmarkdown,
+    SnowballC,
+    testthat (>= 3.0.0),
+    textstem,
+    tibble
+VignetteBuilder: 
+    knitr
+Config/testthat/edition: 3
+Encoding: UTF-8
+LazyData: true
+LazyDataCompression: xz
+RoxygenNote: 7.3.2
