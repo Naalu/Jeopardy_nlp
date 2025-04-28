@@ -6,6 +6,13 @@
 #'
 #' @name jeopardyNLP-nmf-internal
 #' @keywords internal
+#' @importFrom NMF nmf basis residuals
+#' @importFrom tm VCorpus VectorSource DocumentTermMatrix weightTfIdf
+#' @importFrom Matrix t
+#' @importFrom slam row_sums col_sums
+#' @importFrom wordcloud wordcloud
+#' @importFrom RColorBrewer brewer.pal brewer.pal.info
+#' @importFrom grDevices png dev.off
 
 library(NMF) # For NMF algorithm
 library(tm) # For DocumentTermMatrix, TF-IDF
@@ -240,7 +247,7 @@ plot_topic_word_cloud <- function(nmf_result,
     if (save) {
         if (is.null(filepath)) stop("Filepath not set for saving.") # Safety check
         if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
-        png(filepath, width = 800, height = 800)
+        grDevices::png(filepath, width = 800, height = 800)
     }
 
     wordcloud::wordcloud(
@@ -254,7 +261,7 @@ plot_topic_word_cloud <- function(nmf_result,
         colors = colors_to_use
     )
     if (save) {
-        dev.off()
+        grDevices::dev.off()
         message(paste("Word cloud saved to:", filepath))
     }
 }

@@ -8,6 +8,10 @@
 #' @import dplyr
 #' @import ggplot2
 #' @importFrom grDevices dev.off png
+#' @importFrom RColorBrewer brewer.pal brewer.pal.info
+#' @importFrom wordcloud wordcloud
+#' @importFrom stringr str_count str_replace_all
+#' @importFrom tm VCorpus VectorSource TermDocumentMatrix content_transformer removePunctuation removeNumbers removeWords stopwords stripWhitespace
 
 library(readr)
 library(dplyr)
